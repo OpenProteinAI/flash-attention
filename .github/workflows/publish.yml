@@ -5,7 +5,7 @@
 name: Python Package
 
 on:
-  create:
+  push:
     tags:
       - '**'
 
