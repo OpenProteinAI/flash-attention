@@ -194,7 +194,7 @@ inline __device__ void compute_dq_dk_dv_1xN_one_iter(const Params &params, Prng 
     Gmem_softmax_sum gmem_softmax_d(params.dsoftmax_sum, params, tidx);
 
     static_assert(Cta_tile_p::N % Cta_tile_p::M == 0);
-    int begin = Is_causal ? loop_step_idx * Cta_tile_p::N / Cta_tile_p::M : 0;
+    int begin = 0;
     // We want begin to be a multiple of gridDim.z
     // This is because the row indices processed by each threadblock must align between the
     // loop steps, otherwise we have a dependency between the blocks.
@@ -590,8 +590,7 @@ inline __device__ void compute_dq_dk_dv_1xN_one_iter(const Params &params, Prng 
 
         const bool is_final_write =
             Is_last
-            || ((loop_step_idx + 1) * Cta_tile_p::N >= binfo.actual_seqlen_k)
-            || ((Is_causal) && ((begin + l) * Cta_tile_p::M < (loop_step_idx + 1) * Cta_tile_p::N));
+            || ((loop_step_idx + 1) * Cta_tile_p::N >= binfo.actual_seqlen_k);
         if (is_final_write) {
             // if (Is_dropout) {
             //     dq_out[0] = fmha::fmul4(dq_out[0], params.rp_dropout);

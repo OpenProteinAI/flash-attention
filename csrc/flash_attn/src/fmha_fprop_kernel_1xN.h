@@ -272,7 +272,7 @@ inline __device__ void device_1xN_(const Params &params, const int bidb, const i
 
     // Wind gmem tiles to the correct position.
     static_assert(Cta_tile_p::N % Cta_tile_p::M == 0);
-    int begin = Is_causal ? loop_step_idx * Cta_tile_p::N / Cta_tile_p::M : 0;
+    int begin = 0;
     // We want begin to be a multiple of gridDim.z
     // This is because the row indices processed by each threadblock must align between the
     // loop steps, otherwise we have a dependency between the blocks.
@@ -617,8 +617,7 @@ inline __device__ void device_1xN_(const Params &params, const int bidb, const i
 
         const bool is_final_write =
             Is_last
-            || ((loop_step_idx + 1) * Cta_tile_p::N >= binfo.actual_seqlen_k)
-            || ((Is_causal) && ((begin + l) * Cta_tile_p::M < (loop_step_idx + 1) * Cta_tile_p::N));
+            || ((loop_step_idx + 1) * Cta_tile_p::N >= binfo.actual_seqlen_k);
         #pragma unroll
         for (int jj = 0; jj < Gmem_tile_o::STGS_PER_LOOP; jj++) {
             float sum = p_sum_o[jj][0];
