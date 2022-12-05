@@ -42,7 +42,7 @@ jobs:
           cuda-version: ['113','116']
           exclude:
             - torch-version: 1.11.0
-              cuda-version: '111'
+              cuda-version: '116'
 
     steps:
       - name: Checkout
