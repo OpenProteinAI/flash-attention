@@ -38,8 +38,8 @@ jobs:
       matrix:
           # os: [ubuntu-20.04]
           os: [ubuntu-18.04]
-          python-version: ['3.9']
-          torch-version: [1.12.1]
+          python-version: ['3.8','3.9']
+          torch-version: [1.10.0, 1.12.1]
           cuda-version: ['116']
           exclude:
             - torch-version: 1.11.0
