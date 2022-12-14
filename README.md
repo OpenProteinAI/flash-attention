@@ -8,7 +8,27 @@ Paper: https://arxiv.org/abs/2205.14135
 IEEE Spectrum [article](https://spectrum.ieee.org/mlperf-rankings-2022) about our submission to the MLPerf 2.0 benchmark using FlashAttention.
 ![FlashAttention](assets/flashattn_banner.jpg)
 
-#### Triton implementation of FlashAttention
+## Usage
+
+We've been very happy to see FlashAttention being widely adopted in such a short
+time after its release. This [page](https://github.com/HazyResearch/flash-attention/blob/main/usage.md)
+contains a partial list of places where FlashAttention is being used.
+
+## Full model code and training script
+
+We have released the full GPT model
+[implementation](https://github.com/HazyResearch/flash-attention/blob/main/flash_attn/models/gpt.py).
+We also provide optimized implementations of other layers (e.g., MLP, LayerNorm,
+cross-entropy loss, rotary embedding). Overall this speeds up training by 3-5x
+compared to the baseline implementation from Huggingface, reaching up to 189
+TFLOPs/sec per A100, equivalent to 60.6\% model FLOPs utilization (we don't need
+any activation checkpointing). 
+
+We also include a training
+[script](https://github.com/HazyResearch/flash-attention/tree/main/training) to
+train GPT2 on Openwebtext and GPT3 on The Pile.
+
+## Triton implementation of FlashAttention
 
 Phil Tillet (OpenAI) has an experimental implementation of FlashAttention in Triton:
 https://github.com/openai/triton/blob/master/python/tutorials/06-fused-attention.py  
@@ -18,9 +38,14 @@ and experiment with. The notations in the Triton implementation are also closer
 to what's used in our paper.
 
 
-## Alpha release (0.1).
+## Beta release (0.2).
 
-To compile (requiring CUDA 11, NVCC, and an Turing or Ampere GPU):
+To install (requiring CUDA 11, NVCC, and an Turing or Ampere GPU):
+```sh
+pip install flash-attn
+```
+
+Alternatively you can compile from source:
 ```
 python setup.py install
 ```
@@ -38,7 +63,7 @@ FlashAttention currently supports:
 3. Head dimensions that are multiples of 8, up to 128 (e.g., 8, 16, 24, ..., 128). Head dim > 64 backward requires A100.
 
 Our tentative roadmap:
-1. [Jun 2022] Make package pip-installable.
+1. ~~[Jun 2022] Make package pip-installable~~[Done, thanks to lucidrains].
 2. ~~[Jun 2022] Support SM86 GPUs (e.g., RTX 3080, 3090)~~[Done].
 3. [Jun 2022] Refactor to use Cutlass.
 4. ~~[Jun 2022] Support SM75 GPUs (e.g. T4)~~[Done].
@@ -46,7 +71,7 @@ Our tentative roadmap:
 6. ~~[Jul 2022] Implement cross-attention~~[Done].
 7. ~~[Jul 2022] Support head dimension 128~~[Done].
 8. [Jul 2022] Support SM70 GPUs (V100).
-9. [Aug 2022] Fuse rotary embedding.
+9. ~~[Aug 2022] Fuse rotary embedding~~[Done].
 10. [Aug 2022] Support attention bias (e.g. ALiBi, relative positional encoding).
 
 ## Speedup and Memory Savings
@@ -148,10 +173,10 @@ and for his thoughtful answers to our questions about CUDA.
 ## Citation
 If you use this codebase, or otherwise found our work valuable, please cite:
 ```
-@article{dao2022flashattention,
-  title={FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness},
+@inproceedings{dao2022flashattention,
+  title={Flash{A}ttention: Fast and Memory-Efficient Exact Attention with {IO}-Awareness},
   author={Dao, Tri and Fu, Daniel Y. and Ermon, Stefano and Rudra, Atri and R{\'e}, Christopher},
-  journal={arXiv preprint arXiv:2205.14135},
+  booktitle={Advances in Neural Information Processing Systems},
   year={2022}
 }
 ```
