@@ -48,7 +48,7 @@ config = GPT2Config(vocab_size=50257, n_positions=seqlen, n_embd=hidden_dim,
                     n_layer=n_layer, n_head=nheads, 
                     scale_attn_by_inverse_layer_idx=True, 
                     rotary_emb_fraction=rotary_emb_fraction,
-                    use_flash_attn=True, fused_dense_gelu_dense=True,
+                    use_flash_attn=True, fused_mlp=True,
                     fused_bias_fc=True, fused_dropout_add_ln=True, 
                     pad_vocab_size_multiple=8)
 model = GPTLMHeadModel(config)
@@ -82,7 +82,7 @@ cd ../csrc/rotary && pip install .
 ```
 5. Fused dropout + residual + LayerNorm, adapted from Apex's
 [FastLayerNorm](https://github.com/NVIDIA/apex/tree/master/apex/contrib/layer_norm). We add dropout and residual, and make it work for both pre-norm and post-norm architecture.
-This only supports a limited set of dimensions, see `csrc/layer_norm/ln_fwd_cuda_kernel.cu`.
+This supports dimensions divisible by 8, up to 6144.
 ```sh
 cd ../csrc/layer_norm && pip install .
 ```
@@ -156,13 +156,13 @@ python run.py experiment=pile/gpt3-2.7B-flash-hdim128 trainer.devices=8  # 2.7B
 ```
 The default parameters are set for 8 x A100 80GB. We train with bf16 by default.
 
-To train with rotary embedding, run the experiments `pile/gpt3{s,m,l,xl**-flash-rotary**.
+To train with rotary embedding, run the experiments `pile/gpt3{s,m,l,xl}-flash-rotary`.
 
 ### Training options
 
 **Gradient accumulation**: to adjust device batch size to fit into GPU memory
 (the global batch size stays the same, and gradient accumulation is calculated
-automatically), set `datamodule.batch_size=blah**.
+automatically), set `datamodule.batch_size=blah`.
 
 **Multi-node**: to train on multiple nodes, add `trainer.num_nodes=blah`.
 

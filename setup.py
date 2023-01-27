@@ -137,6 +137,8 @@ ext_modules.append(
                     "-std=c++17",
                     "-U__CUDA_NO_HALF_OPERATORS__",
                     "-U__CUDA_NO_HALF_CONVERSIONS__",
+                    "-U__CUDA_NO_HALF2_OPERATORS__",
+                    "-U__CUDA_NO_BFLOAT16_CONVERSIONS__",
                     "--expt-relaxed-constexpr",
                     "--expt-extended-lambda",
                     "--use_fast_math",
@@ -157,7 +159,7 @@ ext_modules.append(
 
 setup(
     name="flash_attn",
-    version="0.2.3",
+    version="0.2.8",
     packages=find_packages(
         exclude=("build", "csrc", "include", "tests", "dist", "docs", "benchmarks", "flash_attn.egg-info",)
     ),

@@ -5,7 +5,7 @@ import torch.nn as nn
 from einops import rearrange
 
 from flash_attn.flash_attn_interface import flash_attn_unpadded_qkvpacked_func
-from flash_attn.bert_padding import unpad_input, pad_input, index_first_axis
+from flash_attn.bert_padding import unpad_input, pad_input
 
 
 class FlashAttention(nn.Module):
@@ -16,7 +16,7 @@ class FlashAttention(nn.Module):
                       (default: 1/sqrt(d_keys) where d_keys is computed at
                       runtime)
         attention_dropout: The dropout rate to apply to the attention
-                           (default: 0.1)
+                           (default: 0.0)
     """
     def __init__(self, softmax_scale=None, attention_dropout=0.0, device=None, dtype=None):
         super().__init__()

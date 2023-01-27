@@ -18,9 +18,14 @@ PR or email us. We'd very much like to hear from you!
 - Microsoft's [DeepSpeed](https://github.com/microsoft/DeepSpeed):
   FlashAttention is [integrated](https://github.com/microsoft/DeepSpeed/blob/ec13da6ba7cabc44bb4745a64a208b8580792954/deepspeed/ops/transformer/inference/triton_ops.py) into DeepSpeed's inference engine.
 
+- Nvidia's [Megatron-LM](https://github.com/NVIDIA/Megatron-LM/pull/267). This
+  library is a popular framework on training large transformer language models at scale.
+
 - MosaicML [Composer](https://github.com/mosaicml/composer)
   [library](https://www.mosaicml.com/blog/gpt-3-quality-for-500k). Composer is a
   library for efficient neural network training.
+  
+- EleutherAI's [GPT-NeoX](https://github.com/EleutherAI/gpt-neox/pull/725). This is a research library for training large language transformer models at scale based on NVIDIA's Megatron-LM and Microsoft's DeepSpeed.
 
 ## MLPerf benchmarks
 
@@ -44,6 +49,11 @@ yields the fastest BERT training on cloud instances in MLPerf training 2.0 (June
   helps train BERT 2.7x faster in the open division.
 
 ## Language model training & inference
+
+- [PubMedGPT 2.7B](https://crfm.stanford.edu/2022/12/15/pubmedgpt.html), a
+  domain-specific LLM for biomedicine, by Stanford CRFM, trained on
+  [MosaicML](https://www.mosaicml.com/blog/introducing-pubmed-gpt) Cloud. Just
+  using FlashAttention nearly halves the total training time.
 
 - Meta's
   [AITemplate](https://ai.facebook.com/blog/gpu-inference-engine-nvidia-amd-open-source/)

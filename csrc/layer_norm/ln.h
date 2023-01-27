@@ -44,6 +44,7 @@ struct ParamsBase {
         , colscale(nullptr)
         , dropout_keep_p(1.f)
         , dropout_scale(1.f)
+        , is_rms_norm(false)
         , workspace(nullptr)
         , barrier(nullptr)
     {
@@ -58,7 +59,7 @@ struct ParamsBase {
 
     // Common data pointers.
     void *x0;
-    void *x1;
+    void *residual;
     void *x;
     void *dmask;
     void *mu;
@@ -74,6 +75,8 @@ struct ParamsBase {
     float dropout_keep_p;
     float dropout_scale;
     float rowscale_const;
+
+    bool is_rms_norm;
 
     // Multi-CTA workspace in gmem.
     void *workspace;
@@ -114,7 +117,7 @@ struct BwdParams : public ParamsBase {
         , dgamma_part(nullptr)
         , dcolscale_part(nullptr)
         , dx0(nullptr)
-        , dx1(nullptr)
+        , dresidual(nullptr)
         , dbeta(nullptr)
         , dgamma(nullptr)
         , dcolscale(nullptr)
@@ -133,7 +136,7 @@ struct BwdParams : public ParamsBase {
 
     // Output: Dgrad.
     void *dx0;
-    void *dx1;
+    void *dresidual;
     // Output: Wgrad.
     void *dbeta;
     void *dgamma;

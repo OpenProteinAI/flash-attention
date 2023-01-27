@@ -1,5 +1,6 @@
 #include <torch/extension.h>
 #include "ATen/cuda/CUDAContext.h"
+#include <c10/cuda/CUDAGuard.h>
 
 #include "ln.h"
 
@@ -80,9 +81,9 @@ layer_norm::BwdFunction & get_bwd_launcher(torch::Dtype wtype, torch::Dtype ityp
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 std::vector<at::Tensor> dropout_add_ln_fwd(const at::Tensor &x0,      // Input: BxSxhidden_size
-                                           c10::optional<const at::Tensor> &x1_,      // Residual: BxSxhidden_size
+                                           c10::optional<const at::Tensor> &residual_,  // Residual: BxSxhidden_size
                                            const at::Tensor &gamma,   // hidden_size
-                                           const at::Tensor &beta,   // hidden_size
+                                           c10::optional<const at::Tensor> &beta_,   // hidden_size
                                            c10::optional<const at::Tensor> &rowscale_,      // BxS
                                            c10::optional<const at::Tensor> &colscale_,      // hidden_size
                                            c10::optional<const at::Tensor> &x0_subset_,      // BxS
@@ -92,22 +93,20 @@ std::vector<at::Tensor> dropout_add_ln_fwd(const at::Tensor &x0,      // Input: 
                                            const float rowscale_const,
                                            const int64_t z_numrows,
                                            c10::optional<at::Generator> gen_,
-                                           bool residual_in_fp32
+                                           bool residual_in_fp32=false,
+                                           bool is_rms_norm=false
 ) {
     auto itype = x0.scalar_type();
-    auto rtype = x1_.has_value()
-        ? x1_.value().scalar_type()
+    auto rtype = residual_.has_value()
+        ? residual_.value().scalar_type()
         : (residual_in_fp32 ? torch::kFloat32 : x0.scalar_type());
     auto wtype = gamma.scalar_type();
     auto otype = itype;
     auto ctype = torch::kFloat32;
     auto mtype = torch::kUInt8;
 
-    TORCH_CHECK(beta.dtype() == wtype);
-
     TORCH_CHECK(x0.is_cuda())
     TORCH_CHECK(gamma.is_cuda())
-    TORCH_CHECK(beta.is_cuda())
 
     TORCH_CHECK(x0.is_contiguous());
     // c10::IntArrayRef does not own the storage, so we need to construct a vector.
@@ -122,11 +121,19 @@ std::vector<at::Tensor> dropout_add_ln_fwd(const at::Tensor &x0,      // Input: 
     const int cols = sizes[1];
     auto hidden_size = gamma.numel();
 
-    if (x1_.has_value()) {
-        auto x1 = x1_.value();
-        TORCH_CHECK(x1.is_cuda())
-        TORCH_CHECK(x1.is_contiguous());
-        TORCH_CHECK(x1.sizes() == sizes);
+    if (beta_.has_value()) {
+        auto beta = beta_.value();
+        TORCH_CHECK(beta.dtype() == wtype);
+        TORCH_CHECK(beta.is_cuda())
+        TORCH_CHECK(beta.is_contiguous());
+        TORCH_CHECK(gamma.sizes() == beta.sizes());
+    }
+
+    if (residual_.has_value()) {
+        auto residual = residual_.value();
+        TORCH_CHECK(residual.is_cuda())
+        TORCH_CHECK(residual.is_contiguous());
+        TORCH_CHECK(residual.sizes() == sizes);
     }
 
     if (rowscale_.has_value()) {
@@ -160,15 +167,18 @@ std::vector<at::Tensor> dropout_add_ln_fwd(const at::Tensor &x0,      // Input: 
         TORCH_CHECK(z_subset.dtype() == torch::kInt32);
     }
 
-    TORCH_CHECK(gamma.sizes() == beta.sizes());
     TORCH_CHECK(hidden_size == cols);
     TORCH_CHECK((hidden_size % 8 == 0) && (hidden_size <= 6144));
 
     TORCH_CHECK(epsilon >= 0.f);
 
+    // Otherwise the kernel will be launched from cuda:0 device
+    // Cast to char to avoid compiler warning about narrowing
+    at::cuda::CUDAGuard device_guard{(char)x0.get_device()};
+
     auto opts = x0.options();
 
-    bool save_x = x1_.has_value() || (dropout_p > 0.f) || rowscale_.has_value() || colscale_.has_value() || x0_subset_.has_value() || (itype != rtype);
+    bool save_x = residual_.has_value() || (dropout_p > 0.f) || rowscale_.has_value() || colscale_.has_value() || x0_subset_.has_value() || (itype != rtype);
     at::Tensor x;
     if (save_x) { x = torch::empty(sizes, opts.dtype(rtype)); }
     at::Tensor dmask;
@@ -184,7 +194,7 @@ std::vector<at::Tensor> dropout_add_ln_fwd(const at::Tensor &x0,      // Input: 
     launch_params.stream = at::cuda::getCurrentCUDAStream().stream();
     TORCH_CHECK(dropout_p < 1.f);
     launch_params.params.dropout_keep_p = 1.f - dropout_p;
-    launch_params.params.x1 = x1_.has_value() ? x1_.value().data_ptr() : nullptr;
+    launch_params.params.residual = residual_.has_value() ? residual_.value().data_ptr() : nullptr;
     launch_params.params.rowscale = rowscale_.has_value() ? rowscale_.value().data_ptr() : nullptr;
     launch_params.params.colscale = colscale_.has_value() ? colscale_.value().data_ptr() : nullptr;
     launch_params.params.x0_subset = x0_subset_.has_value() ? x0_subset_.value().data_ptr() : nullptr;
@@ -213,12 +223,13 @@ std::vector<at::Tensor> dropout_add_ln_fwd(const at::Tensor &x0,      // Input: 
     params.mu = mu.data_ptr();
     params.rs = rsigma.data_ptr();
     params.gamma = gamma.data_ptr();
-    params.beta = beta.data_ptr();
+    params.beta = beta_.has_value() ? beta_.value().data_ptr() : nullptr;
     params.z = z.data_ptr();
     params.epsilon = epsilon;
     params.dropout_scale = 1.f / (1.f - dropout_p);
     params.inverse_cols = 1.f / float(params.cols);
     params.rowscale_const = rowscale_const;
+    params.is_rms_norm = is_rms_norm;
 
     if (dropout_p > 0.f) {
         // number of times random will be generated per thread, to offset philox counter in thc random
@@ -263,7 +274,8 @@ std::vector<at::Tensor> dropout_add_ln_bwd(const at::Tensor &dz,     // BxSxhidd
                                            const float dropout_p,
                                            const float rowscale_const,
                                            const int64_t x0_numrows,
-                                           const bool has_residual
+                                           const bool has_residual,
+                                           bool is_rms_norm=false
 ) {
 
     auto itype = dz.scalar_type();
@@ -364,11 +376,15 @@ std::vector<at::Tensor> dropout_add_ln_bwd(const at::Tensor &dz,     // BxSxhidd
 
     TORCH_CHECK(gamma.numel() == cols);
 
+    // Otherwise the kernel will be launched from cuda:0 device
+    // Cast to char to avoid compiler warning about narrowing
+    at::cuda::CUDAGuard device_guard{(char)dz.get_device()};
+
     auto opts = x.options();
 
     auto dx0 = torch::empty(x0_sizes, opts.dtype(itype));
-    at::Tensor dx1;
-    if (has_residual) { dx1 = torch::empty_like(x, opts.dtype(rtype)); }
+    at::Tensor dresidual;
+    if (has_residual) { dresidual = torch::empty_like(x, opts.dtype(rtype)); }
     auto dgamma = torch::empty_like(gamma);
     auto dbeta = torch::empty_like(gamma);
     at::Tensor dcolscale;
@@ -381,7 +397,7 @@ std::vector<at::Tensor> dropout_add_ln_bwd(const at::Tensor &dz,     // BxSxhidd
     launch_params.props = at::cuda::getCurrentDeviceProperties();
     TORCH_CHECK(dropout_p < 1.f);
     launch_params.params.dropout_keep_p = 1.f - dropout_p;
-    launch_params.params.dx1 = has_residual ? dx1.data_ptr() : nullptr;
+    launch_params.params.dresidual = has_residual ? dresidual.data_ptr() : nullptr;
     launch_params.params.rowscale = rowscale_.has_value() ? rowscale_.value().data_ptr() : nullptr;
     launch_params.params.colscale = colscale_.has_value() ? colscale_.value().data_ptr() : nullptr;
     launch_params.params.x0_subset = x0_subset_.has_value() ? x0_subset_.value().data_ptr() : nullptr;
@@ -422,6 +438,7 @@ std::vector<at::Tensor> dropout_add_ln_bwd(const at::Tensor &dz,     // BxSxhidd
     params.dropout_scale = 1.f / (1.f - dropout_p);
     params.inverse_cols = 1.f / float(params.cols);
     params.rowscale_const = rowscale_const;
+    params.is_rms_norm = is_rms_norm;
 
     if( launch_params.barrier_size > 0 ) {
         // TODO Any way to avoid this?
@@ -433,7 +450,7 @@ std::vector<at::Tensor> dropout_add_ln_bwd(const at::Tensor &dz,     // BxSxhidd
 
     launcher(launch_params, false);
 
-    std::vector<at::Tensor> result = { dx0, dx1, dgamma, dbeta, dgamma_part, dbeta_part };
+    std::vector<at::Tensor> result = { dx0, dresidual, dgamma, dbeta, dgamma_part, dbeta_part };
     if (colscale_.has_value()) {
         result.push_back(dcolscale);
         result.push_back(dcolscale_part);
@@ -444,6 +461,14 @@ std::vector<at::Tensor> dropout_add_ln_bwd(const at::Tensor &dz,     // BxSxhidd
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.doc() = "CUDA DropoutAddLayerNorm";
-  m.def("dropout_add_ln_fwd", &dropout_add_ln_fwd, "Run Dropout + Add + LayerNorm forward kernel");
-  m.def("dropout_add_ln_bwd", &dropout_add_ln_bwd, "Run Dropout + Add + LayerNorm backward kernel");
+  m.def("dropout_add_ln_fwd", &dropout_add_ln_fwd, "Run Dropout + Add + LayerNorm forward kernel",
+        py::arg("x0"), py::arg("residual"), py::arg("gamma"), py::arg("beta"),
+        py::arg("rowscale_"), py::arg("colscale_"), py::arg("x0_subset_"), py::arg("z_subset_"),
+        py::arg("dropout_p"), py::arg("epsilon"), py::arg("rowscale_const"), py::arg("z_numrows"),
+        py::arg("gen_"), py::arg("residual_in_fp32")=false, py::arg("is_rms_norm")=false);
+  m.def("dropout_add_ln_bwd", &dropout_add_ln_bwd, "Run Dropout + Add + LayerNorm backward kernel",
+        py::arg("dz"), py::arg("dx_"), py::arg("x"), py::arg("x0_"), py::arg("dmask_"), py::arg("mu"),
+        py::arg("rsigma"), py::arg("gamma"), py::arg("rowscale_"), py::arg("colscale_"),
+        py::arg("x0_subset_"), py::arg("z_subset_"), py::arg("dropout_p"), py::arg("rowscale_const"),
+        py::arg("x0_numrows"), py::arg("has_residual"), py::arg("is_rms_norm")=false);
 }

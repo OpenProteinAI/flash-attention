@@ -46,7 +46,7 @@ void ln_fwd_kernel(FwdParams params) {
     using Stats = typename Ktraits::Stats;
     using stats_t = typename Stats::stats_t;
 
-    const bool has_residual = params.x1 != nullptr;
+    const bool has_residual = params.residual != nullptr;
     const bool save_x = has_residual || Is_dropout || Has_colscale || (params.rowscale != nullptr) || Has_subset || !(std::is_same<input_t, residual_t>::value);
 
     extern __shared__ char smem_[];
@@ -89,7 +89,11 @@ void ln_fwd_kernel(FwdParams params) {
     for( int it = 0; it < LDGS; it++ ) {
         if (Is_even_cols || (it < num_valid_ldgs)) {
             gamma[it].load_from(params.gamma, idx);
-            beta[it].load_from(params.beta, idx);
+            if (params.beta != nullptr) {
+                beta[it].load_from(params.beta, idx);
+            } else {
+                beta[it].zero_();
+            }
             if (Has_colscale) { colscale[it].load_from(params.colscale, idx); }
             idx += VEC_COLS_PER_LDG;
         }
@@ -107,11 +111,11 @@ void ln_fwd_kernel(FwdParams params) {
         for( int it = 0; it < LDGS; it++ ) {
             if (Is_even_cols || (it < num_valid_ldgs)) {
                 Ivec x0;
-                Rvec x1;
+                Rvec residual;
                 Rvec x;
                 Mvec dmask;
                 if (load_x0) { x0.load_from(params.x0, !Has_subset ? idx_x : idx_x0); }
-                if (has_residual) { x1.load_from(params.x1, idx_x); }
+                if (has_residual) { residual.load_from(params.residual, idx_x); }
                 #pragma unroll
                 for( int jt = 0; jt < NUM_ELTS; jt++ ) {
                     // TD [2022-04-22]: We're memory bound, not compute bound, so we don't need to use
@@ -123,9 +127,9 @@ void ln_fwd_kernel(FwdParams params) {
                         compute_t x0_ij = compute_t(x0.data.elt[jt]) * rowscale_val;
                         x0_ij = keep ? (Is_dropout ? x0_ij * params.dropout_scale : x0_ij) : 0.0f;
                         if (Has_colscale) { x0_ij *= compute_t(colscale[it].data.elt[jt]); }
-                        x_ij = has_residual ? x0_ij + compute_t(x1.data.elt[jt]) : x0_ij;
+                        x_ij = has_residual ? x0_ij + compute_t(residual.data.elt[jt]) : x0_ij;
                     } else {
-                        x_ij = has_residual ? compute_t(x1.data.elt[jt]) : 0.f;
+                        x_ij = has_residual ? compute_t(residual.data.elt[jt]) : 0.f;
                     }
                     if (save_x) { x.data.elt[jt] = x_ij; }
                     xf[it * NUM_ELTS + jt] = x_ij;
@@ -159,7 +163,7 @@ void ln_fwd_kernel(FwdParams params) {
             mu_ptr[row] = mu;
         }
 
-        compute_t rs = rsqrtf(m2 * params.inverse_cols + params.epsilon);
+        compute_t rs = rsqrtf(m2 * params.inverse_cols + params.epsilon + (!params.is_rms_norm ? 0.f : mu * mu));
 
         if( bidn == 0 && warp_n == 0 && lane == 0 ) {
             rs_ptr[row] = rs;
@@ -174,7 +178,7 @@ void ln_fwd_kernel(FwdParams params) {
                     Ovec z;
                     #pragma unroll
                     for( int jt = 0; jt < NUM_ELTS; jt++ ) {
-                        compute_t y_ij = compute_t(rs * (xf[it * NUM_ELTS + jt] - mu));
+                        compute_t y_ij = compute_t(rs * (xf[it * NUM_ELTS + jt] - (!params.is_rms_norm ? mu : 0.f)));
                         compute_t g_ij = gamma[it].data.elt[jt];
                         compute_t b_ij = beta[it].data.elt[jt];
                         z.data.elt[jt] = output_t(g_ij * y_ij + b_ij);
