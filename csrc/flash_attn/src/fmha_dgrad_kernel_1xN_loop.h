@@ -270,7 +270,19 @@ inline __device__ void compute_dq_dk_dv_1xN_one_iter(const Params &params, Prng 
     Gmem_softmax_sum gmem_softmax_d(params.dsoftmax_sum, params, tidx);
 
     static_assert(Cta_tile_p::N % Cta_tile_p::M == 0);
-    int begin = 0;
+    int begin;
+    if (Is_causal) {
+        int test_val = loop_step_idx * Cta_tile_p::N - (binfo.actual_seqlen_k - binfo.actual_seqlen_q);
+        if (loop_step_idx * Cta_tile_p::N < binfo.actual_seqlen_k - binfo.actual_seqlen_q) {
+            begin = 0;
+            // printf("%d, %d, %d, %d, %d, %d done1\n", Cta_tile_p::N, Cta_tile_p::M, binfo.actual_seqlen_k, binfo.actual_seqlen_q, loop_step_idx, begin);
+        } else {
+            begin = test_val / Cta_tile_p::M;
+            // printf("%d, %d, %d, %d, %d, %d done2\n", Cta_tile_p::N, Cta_tile_p::M, binfo.actual_seqlen_k, binfo.actual_seqlen_q, loop_step_idx, begin);
+        }
+    } else {
+        begin = 0;
+    }
     // Otherwise we'd be reading out-of-bound memory before the loop
     if (begin * Cta_tile_p::M >= binfo.actual_seqlen_q) {
         // Still need to zero out dk and dv before returning
@@ -678,7 +690,8 @@ inline __device__ void compute_dq_dk_dv_1xN_one_iter(const Params &params, Prng 
         if (!Seq_parallel) {
             const bool is_final_write =
                 Is_last
-                || ((loop_step_idx + 1) * Cta_tile_p::N >= binfo.actual_seqlen_k);
+                || ((loop_step_idx + 1) * Cta_tile_p::N >= binfo.actual_seqlen_k)
+                || ((Is_causal) && ((begin + l + 1) * Cta_tile_p::M + (binfo.actual_seqlen_k - binfo.actual_seqlen_q - 1) < (loop_step_idx + 1) * Cta_tile_p::N));
             if (is_final_write) {
                 // if (Is_dropout) {
                 //     dq_out[0] = fmha::fmul4(dq_out[0], params.rp_dropout);
