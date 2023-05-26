@@ -207,13 +207,14 @@ mha_fwd(const at::Tensor &q,         // total_q x num_heads x head_size, total_q
     bool is_sm75 = dprops->major == 7 && dprops->minor == 5;
     bool is_sm80 = dprops->major == 8 && dprops->minor == 0;
     bool is_sm8x = dprops->major == 8 && dprops->minor >= 0;
-    TORCH_CHECK(is_sm8x || is_sm75);
+    bool is_sm90 = dprops->major == 9 && dprops->minor == 0;
+    TORCH_CHECK(is_sm90 || is_sm8x || is_sm75);
     auto stream = at::cuda::getCurrentCUDAStream().stream();
     bool is_dropout = p_dropout > 0.0;
     Launch_params<FMHA_fprop_params> launch_params(dprops, stream, is_dropout, return_softmax);
 
     auto q_dtype = q.dtype();
-    TORCH_CHECK(q_dtype == torch::kFloat16 || (is_sm8x && q_dtype == torch::kBFloat16));
+    TORCH_CHECK(q_dtype == torch::kFloat16 || ((is_sm8x || is_sm90) && q_dtype == torch::kBFloat16));
     TORCH_CHECK(k.dtype() == q_dtype);
     TORCH_CHECK(v.dtype() == q_dtype);
     TORCH_CHECK(out.dtype() == q_dtype);
@@ -309,6 +310,10 @@ mha_fwd(const at::Tensor &q,         // total_q x num_heads x head_size, total_q
     // state
     // We use a custom RNG that increases the offset by batch_size * nheads * 32.
     int64_t counter_offset = launch_params.params.b * launch_params.params.h * 32;
+    auto options = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
+    auto rng_state = torch::empty({2}, options.dtype(torch::kInt64));
+    // Forward kernel will populate memory with the seed and offset.
+    launch_params.params.rng_state = reinterpret_cast<uint64_t*>(rng_state.data_ptr());
 
     if( is_dropout ) {
         // See Note [Acquire lock when using random generators]
@@ -319,6 +324,7 @@ mha_fwd(const at::Tensor &q,         // total_q x num_heads x head_size, total_q
     run_fmha_fwd(launch_params);
 
     std::vector<at::Tensor> result = {softmax_lse};
+    result.push_back(rng_state);
     if (return_softmax) {result.push_back(s);}
     return result;
 }
@@ -352,20 +358,22 @@ mha_bwd(const at::Tensor &dout,  // total_q x num_heads, x head_size
         const bool zero_tensors,
         const bool is_causal,
         const int num_splits,
-        c10::optional<at::Generator> gen_
+        c10::optional<at::Generator> gen_,
+        c10::optional<at::Tensor> &rng_state
 ) {
     auto dprops = at::cuda::getCurrentDeviceProperties();
     bool is_sm75 = dprops->major == 7 && dprops->minor == 5;
     bool is_sm80 = dprops->major == 8 && dprops->minor == 0;
     bool is_sm8x = dprops->major == 8 && dprops->minor >= 0;
-    TORCH_CHECK(is_sm8x || is_sm75);
+    bool is_sm90 = dprops->major == 9 && dprops->minor == 0;
+    TORCH_CHECK(is_sm90 || is_sm8x || is_sm75);
     auto launch = &run_fmha_bwd;
 
     bool is_dropout = p_dropout > 0.0;
     auto stream = at::cuda::getCurrentCUDAStream().stream();
 
     auto q_dtype = q.dtype();
-    TORCH_CHECK(q_dtype == torch::kFloat16 || (is_sm8x && q_dtype == torch::kBFloat16));
+    TORCH_CHECK(q_dtype == torch::kFloat16 || ((is_sm8x || is_sm90) && q_dtype == torch::kBFloat16));
     TORCH_CHECK(k.dtype() == q_dtype);
     TORCH_CHECK(v.dtype() == q_dtype);
     TORCH_CHECK(out.dtype() == q_dtype);
@@ -405,8 +413,8 @@ mha_bwd(const at::Tensor &dout,  // total_q x num_heads, x head_size
     const int total_k = k.size(TOTAL_DIM);
     TORCH_CHECK(batch_size > 0);
     TORCH_CHECK((head_size % 8 == 0) && (head_size <= 128));
-    if (head_size > 64) {  // TODO: eventually we should support SM86 and SM70 with d=128 as well
-        TORCH_CHECK(is_sm80);
+    if (head_size > 64) {
+        TORCH_CHECK(is_sm80 || is_sm90, "FlashAttention backward for head dim > 64 requires A100 or H100 GPUs as the implementation needs a large amount of shared memory.");
     }
 
     CHECK_SHAPE(q, total_q, num_heads, head_size);
@@ -486,11 +494,15 @@ mha_bwd(const at::Tensor &dout,  // total_q x num_heads, x head_size
 
     // We use a custom RNG that increases the offset by batch_size * nheads * 32.
     int64_t counter_offset = params.b * params.h * 32;
-
-    if( is_dropout ) {
+    if ( rng_state.has_value() ) {
+        params.rng_state = reinterpret_cast<uint64_t*>(rng_state.value().data_ptr());
+    } else if( is_dropout ) {
         // See Note [Acquire lock when using random generators]
         std::lock_guard<std::mutex> lock(gen->mutex_);
         params.philox_args = gen->philox_cuda_state(counter_offset);
+        auto seeds = at::cuda::philox::unpack(params.philox_args);
+        params.rng_state[0] = std::get<0>(seeds);
+        params.rng_state[1] = std::get<1>(seeds);
     }
 
     launch(params, stream, /*configure=*/false);
@@ -518,7 +530,10 @@ mha_fwd_block(const at::Tensor &q,         // total_q x num_heads x head_size, t
               c10::optional<at::Generator> gen_) {
 
     auto dprops = at::cuda::getCurrentDeviceProperties();
-    TORCH_CHECK(dprops->major == 8 && dprops->minor >= 0);
+    bool is_sm80 = dprops->major == 8 && dprops->minor == 0;
+    bool is_sm8x = dprops->major == 8 && dprops->minor >= 0;
+    bool is_sm90 = dprops->major == 9 && dprops->minor == 0;
+    TORCH_CHECK(is_sm8x || is_sm90);
     auto stream = at::cuda::getCurrentCUDAStream().stream();
     bool is_dropout = p_dropout > 0.0;
     Launch_params<FMHA_fprop_params> launch_params(dprops, stream, is_dropout, return_softmax);
@@ -648,7 +663,8 @@ mha_bwd_block(const at::Tensor &dout,  // total x num_heads, x head_size
     auto dprops = at::cuda::getCurrentDeviceProperties();
     bool is_sm80 = dprops->major == 8 && dprops->minor == 0;
     bool is_sm8x = dprops->major == 8 && dprops->minor >= 0;
-    TORCH_CHECK(dprops->major == 8 && dprops->minor >= 0);
+    bool is_sm90 = dprops->major == 9 && dprops->minor == 0;
+    TORCH_CHECK(is_sm8x || is_sm90);
     auto launch = &run_fmha_block_dgrad_fp16_sm80;
 
     bool is_dropout = p_dropout > 0.0;
@@ -698,7 +714,7 @@ mha_bwd_block(const at::Tensor &dout,  // total x num_heads, x head_size
     TORCH_CHECK(batch_size > 0);
     TORCH_CHECK(head_size == 16 || head_size == 32 || head_size == 64 || head_size == 128);
     if (head_size == 128) {  // TODO: eventually we should support SM86 and SM70 with d=128 as well
-        TORCH_CHECK(is_sm80);
+        TORCH_CHECK(is_sm80 || is_sm90);
     }
 
     CHECK_SHAPE(q, total_q, num_heads, head_size);

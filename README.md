@@ -37,10 +37,22 @@ As Triton is a higher-level language than CUDA, it might be easier to understand
 and experiment with. The notations in the Triton implementation are also closer
 to what's used in our paper.
 
+We also have an experimental implementation in Triton that support attention
+bias (e.g. ALiBi):
+https://github.com/HazyResearch/flash-attention/blob/main/flash_attn/flash_attn_triton.py
 
-## Beta release (0.2).
 
-To install (requiring CUDA 11, NVCC, and an Turing or Ampere GPU):
+## Installation and features
+
+Requirements:
+- CUDA 11.4 and above.
+- PyTorch 1.12 and above.
+
+We recommend the
+[Pytorch](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/pytorch)
+container from Nvidia, which has all the required tools to install FlashAttention.
+
+To install:
 ```sh
 pip install flash-attn
 ```
@@ -58,21 +70,83 @@ PYTHONPATH=$PWD python benchmarks/benchmark_flash_attention.py
 ```
 
 FlashAttention currently supports:
-1. Turing or Ampere GPUs (e.g., A100, RTX 3090, T4, RTX 2080).
-2. fp16 and bf16 (bf16 requires Ampere GPUs).
-3. Head dimensions that are multiples of 8, up to 128 (e.g., 8, 16, 24, ..., 128). Head dim > 64 backward requires A100.
+1. Turing, Ampere, Ada, or Hopper GPUs (e.g., H100, A100, RTX 3090, T4, RTX 2080).
+2. fp16 and bf16 (bf16 requires Ampere, Ada, or Hopper GPUs).
+3. Head dimensions that are multiples of 8, up to 128 (e.g., 8, 16, 24, ...,
+   128). Head dim > 64 backward requires A100 or H100.
 
 Our tentative roadmap:
 1. ~~[Jun 2022] Make package pip-installable~~[Done, thanks to lucidrains].
 2. ~~[Jun 2022] Support SM86 GPUs (e.g., RTX 3080, 3090)~~[Done].
-3. [Jun 2022] Refactor to use Cutlass.
-4. ~~[Jun 2022] Support SM75 GPUs (e.g. T4)~~[Done].
-5. ~~[Jun 2022] Support bf16~~[Done].
-6. ~~[Jul 2022] Implement cross-attention~~[Done].
-7. ~~[Jul 2022] Support head dimension 128~~[Done].
-8. [Jul 2022] Support SM70 GPUs (V100).
-9. ~~[Aug 2022] Fuse rotary embedding~~[Done].
-10. [Aug 2022] Support attention bias (e.g. ALiBi, relative positional encoding).
+3. ~~[Jun 2022] Support SM75 GPUs (e.g. T4)~~[Done].
+4. ~~[Jun 2022] Support bf16~~[Done].
+5. ~~[Jul 2022] Implement cross-attention~~[Done].
+6. ~~[Jul 2022] Support head dimension 128~~[Done].
+7. ~~[Aug 2022] Fuse rotary embedding~~[Done].
+8. ~~[Mar 2023] Support SM90 GPUs (H100)~~[Done].
+
+
+## How to use FlashAttention
+
+Here's a simple example:
+```python
+import torch
+from flash_attn.flash_attention import FlashMHA
+
+# Replace this with your correct GPU device
+device = "cuda:0"
+
+# Create attention layer. This is similar to torch.nn.MultiheadAttention,
+# and it includes the input and output linear layers
+flash_mha = FlashMHA(
+    embed_dim=128, # total channels (= num_heads * head_dim)
+    num_heads=8, # number of heads
+    device=device,
+    dtype=torch.float16,
+)
+
+# Run forward pass with dummy data
+x = torch.randn(
+    (64, 256, 128), # (batch, seqlen, embed_dim)
+    device=device,
+    dtype=torch.float16
+)
+
+output = flash_mha(x)[0]
+```
+
+Alternatively, you can import the inner attention layer only (so that the input
+and output linear layers are not included):
+```python
+from flash_attn.flash_attention import FlashAttention
+
+# Create the nn.Module
+flash_attention = FlashAttention()
+```
+
+Or, if you need more fine-grained control, you can import one of the lower-level
+functions (this is more similar to the `torch.nn.functional` style):
+```python
+from flash_attn.flash_attn_interface import flash_attn_unpadded_func
+
+# or
+
+from flash_attn.flash_attn_interface import flash_attn_unpadded_qkvpacked_split_func
+
+# etc.
+```
+
+There are also separate Python files with various FlashAttention extensions:
+```python
+# Import the triton implementation (torch.nn.functional version only)
+from flash_attn.flash_attn_triton import flash_attn_func
+
+# Import block sparse attention (nn.Module version)
+from flash_attn.flash_blocksparse_attention import FlashBlocksparseMHA, FlashBlocksparseAttention
+
+# Import block sparse attention (torch.nn.functional version)
+from flash_attn.flash_blocksparse_attn_interface import flash_blocksparse_attn_func
+```
 
 ## Speedup and Memory Savings
 
