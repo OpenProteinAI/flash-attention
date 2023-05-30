@@ -102,7 +102,12 @@ def _fwd_kernel(
     if BIAS_TYPE == 'vector':
         b_ptrs = Bias + off_b * stride_bb + off_h * stride_bh + offs_n
     elif BIAS_TYPE == 'matrix':
-        b_ptrs = Bias + off_b * stride_bb + off_h * stride_bh + (offs_m[:, None] * stride_bm + offs_n[None, :])
+        off_hb_b = off_hb.to(tl.int64)
+        off_b_b = off_hb_b // nheads
+        off_h_b = off_hb_b % nheads
+        start_m_b = start_m.to(tl.int64)
+        offs_m_b = start_m_b * BLOCK_M + tl.arange(0, BLOCK_M)
+        b_ptrs = Bias + off_b_b * stride_bb + off_h_b * stride_bh + (offs_m_b[:, None] * stride_bm + offs_n[None, :])
     # initialize pointer to m and l
     t_ptrs = TMP + off_hb * seqlen_q_rounded + offs_m
     lse_i = tl.zeros([BLOCK_M], dtype=tl.float32) - float("inf")
@@ -311,7 +316,11 @@ def _bwd_kernel_one_col_block(
     if BIAS_TYPE == 'vector':
         b_ptrs = Bias + offs_n
     elif BIAS_TYPE == 'matrix':
-        b_ptrs = Bias + (offs_qm[:, None] * stride_bm + offs_n[None, :])
+        start_n_b = start_n.to(tl.int64)
+        begin_m_b = 0 if not IS_CAUSAL else ((start_n_b * BLOCK_N) // BLOCK_M) * BLOCK_M
+        offs_qm_b = begin_m_b + tl.arange(0, BLOCK_M)
+        offs_n_b = start_n_b * BLOCK_N + tl.arange(0, BLOCK_N)
+        b_ptrs = Bias + (offs_qm_b[:, None] * stride_bm + offs_n_b[None, :])
     # initialize dv and dk
     dv = tl.zeros([BLOCK_N, BLOCK_HEADDIM], dtype=tl.float32)
     dk = tl.zeros([BLOCK_N, BLOCK_HEADDIM], dtype=tl.float32)
@@ -538,7 +547,10 @@ def _bwd_kernel(
     DK += off_b * stride_dkb + off_h * stride_dkh
     DV += off_b * stride_dvb + off_h * stride_dvh
     if BIAS_TYPE != 'none':
-        Bias += off_b * stride_bb + off_h * stride_bh
+        if BIAS_TYPE == 'matrix':
+            Bias += off_b.to(tl.int64) * stride_bb + off_h.to(tl.int64) * stride_bh
+        else:
+            Bias += off_b * stride_bb + off_h * stride_bh
     # pointer to row-wise quantities in value-like data
     D += off_hb * seqlen_q_rounded
     LSE += off_hb * seqlen_q_rounded

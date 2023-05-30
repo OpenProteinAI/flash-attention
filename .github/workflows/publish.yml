@@ -41,7 +41,7 @@ jobs:
           # torch-version: [1.12.1, 2.0.0]
           # cuda-version: ['116', '118']
           python-version: ['3.9']
-          torch-version: [1.12.1, 1.13.1, 2.0.0]
+          torch-version: [1.12.1, 1.13.1, 2.0.1]
           cuda-version: ['116', '117', '118']
           exclude:
             - torch-version: 1.12.1
@@ -52,9 +52,9 @@ jobs:
               cuda-version: '116'
             - torch-version: 1.13.1
               cuda-version: '118'
-            - torch-version: 2.0.0
+            - torch-version: 2.0.1
               cuda-version: '116'
-            - torch-version: 2.0.0
+            - torch-version: 2.0.1
               cuda-version: '117'
     steps:
       - name: Checkout
