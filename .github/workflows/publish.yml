@@ -5,7 +5,7 @@
 name: Python Package
 
 on:
-  create:
+  push:
     tags:
       - '**'
 
@@ -36,15 +36,26 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-          # os: [ubuntu-20.04]
-          os: [ubuntu-18.04]
-          python-version: ['3.7', '3.8', '3.9', '3.10']
-          torch-version: [1.11.0, 1.12.0, 1.12.1]
-          cuda-version: ['113', '116']
+          os: [ubuntu-20.04]
+          # python-version: ['3.8', '3.9']
+          # torch-version: [1.12.1, 2.0.0]
+          # cuda-version: ['116', '118']
+          python-version: ['3.9']
+          torch-version: [1.12.1, 1.13.1, 2.0.1]
+          cuda-version: ['116', '117', '118']
           exclude:
-            - torch-version: 1.11.0
+            - torch-version: 1.12.1
+              cuda-version: '117'
+            - torch-version: 1.12.1
+              cuda-version: '118'
+            - torch-version: 1.13.1
               cuda-version: '116'
-
+            - torch-version: 1.13.1
+              cuda-version: '118'
+            - torch-version: 2.0.1
+              cuda-version: '116'
+            - torch-version: 2.0.1
+              cuda-version: '117'
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -81,8 +92,8 @@ jobs:
 
       - name: Install PyTorch ${{ matrix.torch-version }}+cu${{ matrix.cuda-version }}
         run: |
-          pip install numpy pyyaml scipy ipython mkl mkl-include ninja cython typing pandas typing-extensions dataclasses && conda clean -ya
-          pip install --no-index --no-cache-dir torch==${{ matrix.torch-version }} -f https://download.pytorch.org/whl/cu${{ matrix.cuda-version }}/torch_stable.html
+          pip install numpy pyyaml scipy ipython mkl mkl-include ninja cython typing pandas typing-extensions dataclasses packaging einops setuptools && conda clean -ya
+          pip install --no-cache-dir torch==${{ matrix.torch-version }} --index-url https://download.pytorch.org/whl/cu${{ matrix.cuda-version }} --extra-index-url https://pypi.org/simple
           python --version
           python -c "import torch; print('PyTorch:', torch.__version__)"
           python -c "import torch; print('CUDA:', torch.version.cuda)"
@@ -107,7 +118,7 @@ jobs:
           export FORCE_CUDA="1"
           export PATH=/usr/local/nvidia/bin:/usr/local/nvidia/lib64:$PATH
           export LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
-          export CUDA_INSTALL_DIR=/usr/local/cuda-11.3$CUDA_INSTALL_DIR
+          export CUDA_INSTALL_DIR=/usr/local/cuda$CUDA_INSTALL_DIR
           pip install wheel
           python setup.py bdist_wheel --dist-dir=dist
           tmpname=cu${{ matrix.cuda-version }}torch${{ matrix.torch-version }}
