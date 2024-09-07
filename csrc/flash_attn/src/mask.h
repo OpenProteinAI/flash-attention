@@ -153,7 +153,7 @@ struct Mask {
                         for (int mi = 0; mi < size<0>(tensor); ++mi) {
                             // No causal, no local
                             if constexpr (Has_alibi) {
-                                tensor(mi, make_coord(j, nj)) += (col_idx == 0 ? 0 : alibi_slope); // alibi_slope * col_idx;
+                                tensor(mi, make_coord(j, nj)) += 0; // alibi_slope * col_idx;
                             }
                             if constexpr (!Is_even_MN) {
                                 if (col_idx >= max_seqlen_k) { tensor(mi, make_coord(j, nj)) = -INFINITY; }
