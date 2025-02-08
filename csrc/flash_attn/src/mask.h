@@ -177,7 +177,13 @@ struct Mask {
                             for (int j = 0; j < size<1, 0>(tensor); ++j) {
                                 const int col_idx = col_idx_base + j;
                                 if constexpr (Has_alibi) {
-                                    tensor(make_coord(i, mi), make_coord(j, nj)) += ((row_idx + max_seqlen_k == max_seqlen_q + col_idx) ? 0 : alibi_slope);
+                                    if constexpr (Is_causal) {
+                                        tensor(make_coord(i, mi), make_coord(j, nj)) += ((col_idx == (col_idx_limit_right - 1)) ? 0 : alibi_slope);
+
+                                    } else {
+                                        tensor(make_coord(i, mi), make_coord(j, nj)) += ((row_idx + max_seqlen_k == max_seqlen_q + col_idx) ? 0 : alibi_slope);
+
+                                    }
                                 }
                                 if constexpr (Causal_mask) {
                                     if (col_idx >= col_idx_limit_right) {
