@@ -37,14 +37,20 @@ struct Alibi {
         const int col_idx_offset = col_idx_offset_ + (lane_id % 4) * 2;
         if constexpr (Is_causal) {  // Simpler, we add the same bias vector to all rows
             #pragma unroll
-            for (int nj = 0; nj < size<1, 1>(tensor); ++nj) {
-                const int col_idx_base = col_idx_offset + nj * 8;
+            for (int mi = 0; mi < size<0, 1>(tensor); ++mi) {
+                const int row_idx_base = row_idx_offset + mi * warp_row_stride;
                 #pragma unroll
-                for (int j = 0; j < size<1, 0>(tensor); ++j) {
-                    const int col_idx = col_idx_base + j;
+                for (int i = 0; i < size<0, 0>(tensor); ++i) {
+                    const int row_idx = row_idx_base + i * 8;
+                    const int col_idx_limit_right = std::min(max_seqlen_k, row_idx + 1 + max_seqlen_k - max_seqlen_q);
                     #pragma unroll
-                    for (int mi = 0; mi < size<0>(tensor); ++mi) {
-                        tensor(mi, make_coord(j, nj)) += alibi_slope * col_idx;
+                    for (int nj = 0; nj < size<1, 1>(tensor); ++nj) {
+                        const int col_idx_base = col_idx_offset + nj * 8;
+                        #pragma unroll
+                        for (int j = 0; j < size<1, 0>(tensor); ++j) {
+                            const int col_idx = col_idx_base + j;
+                            tensor(make_coord(i, mi), make_coord(j, nj)) += ((col_idx == (col_idx_limit_right - 1)) ? 0 : alibi_slope);
+                        }
                     }
                 }
             }
@@ -61,7 +67,7 @@ struct Alibi {
                         #pragma unroll
                         for (int j = 0; j < size<1, 0>(tensor); ++j) {
                             const int col_idx = col_idx_base + j;
-                            tensor(make_coord(i, mi), make_coord(j, nj)) -= alibi_slope * abs(row_idx + max_seqlen_k - max_seqlen_q - col_idx);
+                            tensor(make_coord(i, mi), make_coord(j, nj)) += (((row_idx + max_seqlen_k - max_seqlen_q - col_idx) == 0) ? 0 : alibi_slope);
                         }
                     }
                 }
