@@ -181,7 +181,7 @@ struct Mask {
                                         tensor(make_coord(i, mi), make_coord(j, nj)) += ((col_idx == (col_idx_limit_right - 1)) ? 0 : alibi_slope);
 
                                     } else {
-                                        tensor(make_coord(i, mi), make_coord(j, nj)) += ((col_idx == row_idx) ? 0 : alibi_slope);
+                                        tensor(make_coord(i, mi), make_coord(j, nj)) += (((row_idx + max_seqlen_k - max_seqlen_q - col_idx) == 0) ? 0 : alibi_slope);
 
                                     }
                                 }
