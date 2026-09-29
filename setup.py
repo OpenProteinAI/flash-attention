@@ -536,6 +536,10 @@ setup(
             "docs",
             "benchmarks",
             "flash_attn.egg-info",
+            # flash_attn.cute is FlashAttention-4, which is published as its own
+            # distribution; shipping it here overwrites that distribution's files.
+            "flash_attn.cute",
+            "flash_attn.cute.*",
         )
     ),
     author="Tri Dao",
